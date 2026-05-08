@@ -14,80 +14,274 @@
       <div id="message">按 Enter 开始游戏</div>
     </div>
   </div>
-  <script type="module">
-    import { createGame, moveSnake, changeDirection, getSpeed, INITIAL_SPEED } from './js/game.js';
-    import { initRenderer, render, updateUI } from './js/renderer.js';
-    import { setupInput } from './js/input.js';
+  <script>
+    // === game.js — pure game logic ===
 
-    const canvasReady = initRenderer();
-    if (!canvasReady) throw new Error('Canvas not supported');
+    const GRID_SIZE = 20;
+    const INITIAL_SPEED = 150;
+    const SPEED_DECREMENT = 10;
+    const MIN_SPEED = 50;
+    const FOODS_PER_SPEEDUP = 5;
 
-    let game = createGame();
-    let timerId = null;
-    let currentSpeed = INITIAL_SPEED;
-
-    function loop() {
-      game = moveSnake(game);
-      render(game);
-      updateUI(game);
-
-      const newSpeed = getSpeed(game.foodsEaten);
-      if (newSpeed !== currentSpeed) {
-        currentSpeed = newSpeed;
-        clearInterval(timerId);
-        if (game.state === 'PLAYING') {
-          timerId = setInterval(loop, currentSpeed);
+    function randomFood(snakeBody) {
+      const occupied = new Set(snakeBody.map(s => `${s.x},${s.y}`));
+      const candidates = [];
+      for (let x = 0; x < GRID_SIZE; x++) {
+        for (let y = 0; y < GRID_SIZE; y++) {
+          if (!occupied.has(`${x},${y}`)) candidates.push({ x, y });
         }
       }
+      return candidates.length > 0
+        ? candidates[Math.floor(Math.random() * candidates.length)]
+        : null;
+    }
 
-      if (game.state === 'GAME_OVER' || game.state === 'WIN') {
-        clearInterval(timerId);
-        timerId = null;
-        render(game);
-        updateUI(game);
+    const OPPOSITES = { UP: 'DOWN', DOWN: 'UP', LEFT: 'RIGHT', RIGHT: 'LEFT' };
+
+    function changeDirection(game, newDir) {
+      if (OPPOSITES[newDir] !== game.snake.direction) {
+        game.snake.direction = newDir;
+      }
+      return game;
+    }
+
+    function moveSnake(game) {
+      if (game.state !== 'PLAYING') return game;
+
+      const head = game.snake.body[0];
+      const dir = game.snake.direction;
+      const dirs = { UP: { x: 0, y: -1 }, DOWN: { x: 0, y: 1 }, LEFT: { x: -1, y: 0 }, RIGHT: { x: 1, y: 0 } };
+      const delta = dirs[dir];
+      const newHead = { x: head.x + delta.x, y: head.y + delta.y };
+
+      if (newHead.x < 0 || newHead.x >= GRID_SIZE || newHead.y < 0 || newHead.y >= GRID_SIZE) {
+        game.state = 'GAME_OVER';
+        return game;
+      }
+
+      if (game.snake.body.some(seg => seg.x === newHead.x && seg.y === newHead.y)) {
+        game.state = 'GAME_OVER';
+        return game;
+      }
+
+      game.snake.body.unshift(newHead);
+
+      if (newHead.x === game.food.x && newHead.y === game.food.y) {
+        game.score++;
+        game.foodsEaten++;
+        const newFood = randomFood(game.snake.body);
+        if (newFood === null) {
+          game.state = 'WIN';
+          return game;
+        }
+        game.food = newFood;
+      } else {
+        game.snake.body.pop();
+      }
+
+      return game;
+    }
+
+    function getSpeed(foodsEaten) {
+      const steps = Math.floor(foodsEaten / FOODS_PER_SPEEDUP);
+      return Math.max(MIN_SPEED, INITIAL_SPEED - steps * SPEED_DECREMENT);
+    }
+
+    function createGame() {
+      const mid = Math.floor(GRID_SIZE / 2);
+      const body = [
+        { x: mid, y: mid },
+        { x: mid - 1, y: mid },
+        { x: mid - 2, y: mid },
+      ];
+      const food = randomFood(body);
+      return {
+        snake: { body, direction: 'RIGHT' },
+        food,
+        state: 'IDLE',
+        score: 0,
+        foodsEaten: 0,
+      };
+    }
+
+    // === renderer.js — Canvas rendering ===
+
+    const CELL_PX = 25;
+    const CANVAS_SIZE = GRID_SIZE * CELL_PX;
+
+    const COLORS = {
+      bg: '#1a1a2e',
+      grid: '#16213e',
+      snake: '#00ff88',
+      snakeHead: '#00cc66',
+      food: '#ff4444',
+      text: '#ffffff',
+    };
+
+    let canvas, ctx;
+
+    function initRenderer() {
+      canvas = document.getElementById('game-canvas');
+      if (!canvas || !canvas.getContext) {
+        const msg = document.getElementById('message');
+        if (msg) msg.textContent = '你的浏览器不支持 Canvas，请换用现代浏览器';
+        return false;
+      }
+      canvas.width = CANVAS_SIZE;
+      canvas.height = CANVAS_SIZE;
+      ctx = canvas.getContext('2d');
+      return true;
+    }
+
+    function render(game) {
+      if (!ctx) return;
+
+      ctx.fillStyle = COLORS.bg;
+      ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+
+      ctx.strokeStyle = COLORS.grid;
+      ctx.lineWidth = 0.5;
+      for (let i = 0; i <= GRID_SIZE; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * CELL_PX, 0);
+        ctx.lineTo(i * CELL_PX, CANVAS_SIZE);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i * CELL_PX);
+        ctx.lineTo(CANVAS_SIZE, i * CELL_PX);
+        ctx.stroke();
+      }
+
+      if (game.food) {
+        ctx.fillStyle = COLORS.food;
+        ctx.fillRect(game.food.x * CELL_PX + 2, game.food.y * CELL_PX + 2, CELL_PX - 4, CELL_PX - 4);
+      }
+
+      game.snake.body.forEach((seg, i) => {
+        ctx.fillStyle = i === 0 ? COLORS.snakeHead : COLORS.snake;
+        ctx.fillRect(seg.x * CELL_PX + 1, seg.y * CELL_PX + 1, CELL_PX - 2, CELL_PX - 2);
+      });
+    }
+
+    function updateUI(game) {
+      const scoreEl = document.getElementById('score-display');
+      const msgEl = document.getElementById('message');
+      if (scoreEl) scoreEl.textContent = `得分: ${game.score}`;
+
+      const messages = {
+        IDLE: '按 Enter 开始游戏',
+        PLAYING: '',
+        PAUSED: '暂停中 — 按 Space 继续',
+        GAME_OVER: '游戏结束！按 Enter 重新开始',
+        WIN: '你赢了！按 Enter 重新开始',
+      };
+      if (msgEl && messages[game.state] !== undefined) {
+        msgEl.textContent = messages[game.state];
       }
     }
 
-    function startLoop() {
-      clearInterval(timerId);
-      currentSpeed = getSpeed(game.foodsEaten);
-      timerId = setInterval(loop, currentSpeed);
+    // === input.js — keyboard handling ===
+
+    const KEY_MAP = {
+      ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT',
+      w: 'UP', W: 'UP', s: 'DOWN', S: 'DOWN', a: 'LEFT', A: 'LEFT', d: 'RIGHT', D: 'RIGHT',
+    };
+
+    function setupInput({ onDirection, onPause, onRestart }) {
+      document.addEventListener('keydown', (e) => {
+        const dir = KEY_MAP[e.key];
+        if (dir) {
+          e.preventDefault();
+          onDirection(dir);
+          return;
+        }
+        if (e.key === ' ' || e.code === 'Space') {
+          e.preventDefault();
+          onPause();
+          return;
+        }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          onRestart();
+        }
+      });
+
+      window.addEventListener('blur', () => {
+        onPause();
+      });
     }
 
-    function restartLoop() {
-      clearInterval(timerId);
-      timerId = setInterval(loop, currentSpeed);
-    }
+    // === main bootstrap ===
 
-    setupInput({
-      onDirection(dir) {
-        game = changeDirection(game, dir);
-      },
-      onPause() {
-        if (game.state === 'PLAYING') {
-          game.state = 'PAUSED';
+    const canvasReady = initRenderer();
+    if (canvasReady) {
+      let game = createGame();
+      let timerId = null;
+      let currentSpeed = INITIAL_SPEED;
+
+      function loop() {
+        game = moveSnake(game);
+        render(game);
+        updateUI(game);
+
+        const newSpeed = getSpeed(game.foodsEaten);
+        if (newSpeed !== currentSpeed) {
+          currentSpeed = newSpeed;
+          clearInterval(timerId);
+          if (game.state === 'PLAYING') {
+            timerId = setInterval(loop, currentSpeed);
+          }
+        }
+
+        if (game.state === 'GAME_OVER' || game.state === 'WIN') {
           clearInterval(timerId);
           timerId = null;
           render(game);
           updateUI(game);
-        } else if (game.state === 'PAUSED') {
-          game.state = 'PLAYING';
-          restartLoop();
         }
-      },
-      onRestart() {
-        if (game.state === 'IDLE' || game.state === 'GAME_OVER' || game.state === 'WIN') {
-          game = createGame();
-          game.state = 'PLAYING';
-          render(game);
-          updateUI(game);
-          startLoop();
-        }
-      },
-    });
+      }
 
-    render(game);
-    updateUI(game);
+      function startLoop() {
+        clearInterval(timerId);
+        currentSpeed = getSpeed(game.foodsEaten);
+        timerId = setInterval(loop, currentSpeed);
+      }
+
+      function restartLoop() {
+        clearInterval(timerId);
+        timerId = setInterval(loop, currentSpeed);
+      }
+
+      setupInput({
+        onDirection(dir) {
+          game = changeDirection(game, dir);
+        },
+        onPause() {
+          if (game.state === 'PLAYING') {
+            game.state = 'PAUSED';
+            clearInterval(timerId);
+            timerId = null;
+            render(game);
+            updateUI(game);
+          } else if (game.state === 'PAUSED') {
+            game.state = 'PLAYING';
+            restartLoop();
+          }
+        },
+        onRestart() {
+          if (game.state === 'IDLE' || game.state === 'GAME_OVER' || game.state === 'WIN') {
+            game = createGame();
+            game.state = 'PLAYING';
+            render(game);
+            updateUI(game);
+            startLoop();
+          }
+        },
+      });
+
+      render(game);
+      updateUI(game);
+    }
   </script>
 </body>
 </html>
