@@ -14,8 +14,80 @@
       <div id="message">按 Enter 开始游戏</div>
     </div>
   </div>
-  <script type="module" src="js/game.js"></script>
-  <script type="module" src="js/renderer.js"></script>
-  <script type="module" src="js/input.js"></script>
+  <script type="module">
+    import { createGame, moveSnake, changeDirection, getSpeed, INITIAL_SPEED } from './js/game.js';
+    import { initRenderer, render, updateUI } from './js/renderer.js';
+    import { setupInput } from './js/input.js';
+
+    const canvasReady = initRenderer();
+    if (!canvasReady) throw new Error('Canvas not supported');
+
+    let game = createGame();
+    let timerId = null;
+    let currentSpeed = INITIAL_SPEED;
+
+    function loop() {
+      game = moveSnake(game);
+      render(game);
+      updateUI(game);
+
+      const newSpeed = getSpeed(game.foodsEaten);
+      if (newSpeed !== currentSpeed) {
+        currentSpeed = newSpeed;
+        clearInterval(timerId);
+        if (game.state === 'PLAYING') {
+          timerId = setInterval(loop, currentSpeed);
+        }
+      }
+
+      if (game.state === 'GAME_OVER' || game.state === 'WIN') {
+        clearInterval(timerId);
+        timerId = null;
+        render(game);
+        updateUI(game);
+      }
+    }
+
+    function startLoop() {
+      clearInterval(timerId);
+      currentSpeed = getSpeed(game.foodsEaten);
+      timerId = setInterval(loop, currentSpeed);
+    }
+
+    function restartLoop() {
+      clearInterval(timerId);
+      timerId = setInterval(loop, currentSpeed);
+    }
+
+    setupInput({
+      onDirection(dir) {
+        game = changeDirection(game, dir);
+      },
+      onPause() {
+        if (game.state === 'PLAYING') {
+          game.state = 'PAUSED';
+          clearInterval(timerId);
+          timerId = null;
+          render(game);
+          updateUI(game);
+        } else if (game.state === 'PAUSED') {
+          game.state = 'PLAYING';
+          restartLoop();
+        }
+      },
+      onRestart() {
+        if (game.state === 'IDLE' || game.state === 'GAME_OVER' || game.state === 'WIN') {
+          game = createGame();
+          game.state = 'PLAYING';
+          render(game);
+          updateUI(game);
+          startLoop();
+        }
+      },
+    });
+
+    render(game);
+    updateUI(game);
+  </script>
 </body>
 </html>
